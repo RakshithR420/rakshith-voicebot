@@ -64,14 +64,14 @@
   <div class="card">
     <ol class="how">
       <li>Tap the microphone and allow microphone access.</li>
-      <li>Ask your question, then pause. I'll answer out loud.</li>
+      <li>Ask your question, then pause (or tap the mic again). I'll answer out loud.</li>
       <li>No microphone? Type your question in the box below.</li>
     </ol>
 
     <div class="microw">
       <button id="mic" aria-label="Tap to speak">🎤</button>
       <div id="status">Tap the microphone to start</div>
-      <div id="support" class="warn" hidden>Voice input isn't supported in this browser. Please use Chrome, Edge or Safari, or type your question below.</div>
+      <div id="support" class="warn" hidden>Voice recording isn't available in this browser. Please type your question below.</div>
     </div>
 
     <div class="chips" id="chips"></div>
@@ -157,7 +157,7 @@ async function ask(q){
     const data = await r.json();
     const reply = data.reply || data.error || "Sorry, something went wrong.";
     thinking.lastChild.textContent = reply;
-    if (data.reply){ history.push({role:"assistant", content:reply}); speak(reply); }
+    if (data.reply){ history.push({role:"assistant", content:reply}); statusEl.textContent = "Tap the microphone to ask another question"; speak(reply); }
     else statusEl.textContent = reply;
   }catch(e){
     thinking.lastChild.textContent = "Couldn't reach the server. Please check your connection and try again.";
@@ -166,32 +166,90 @@ async function ask(q){
 }
 $("form").onsubmit = e => { e.preventDefault(); const t = $("text"); ask(t.value); t.value = ""; };
 
-// ---------- Listening ----------
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-if (!SR){ $("support").hidden = false; mic.disabled = true; statusEl.textContent = "Type your question below"; }
-else{
-  const rec = new SR(); rec.lang = "en-IN"; rec.interimResults = true; rec.continuous = false;
-  let listening = false, finalText = "";
-  rec.onstart = () => { listening = true; finalText = ""; mic.classList.add("listening"); statusEl.textContent = "Listening… ask your question"; };
-  rec.onresult = e => {
-    let interim = "";
-    for (let i = e.resultIndex; i < e.results.length; i++){
-      const t = e.results[i][0].transcript;
-      if (e.results[i].isFinal) finalText += t; else interim += t;
-    }
-    statusEl.textContent = "“" + (finalText + interim).trim() + "”";
-  };
-  rec.onerror = e => {
-    statusEl.textContent = e.error === "not-allowed" ? "Microphone blocked. Allow mic access in your browser, or type below."
-      : e.error === "no-speech" ? "I didn't hear anything. Tap the mic and try again." : "Couldn't hear that. Please try again or type below.";
-  };
-  rec.onend = () => { listening = false; mic.classList.remove("listening"); if (finalText.trim()) ask(finalText); };
-  mic.onclick = () => {
-    if (listening){ rec.stop(); return; }
-    if ("speechSynthesis" in window) speechSynthesis.cancel();
-    try{ rec.start(); }catch(_){}
-  };
+// ---------- Listening (records audio, works in every modern browser) ----------
+let recorder = null, stream = null, chunks = [], recording = false, audioCtx = null, silenceTimer = null, maxTimer = null;
+
+function pickMime(){
+  const types = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg;codecs=opus"];
+  for (const t of types) if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) return t;
+  return "";
 }
+
+function cleanupAudio(){
+  clearInterval(silenceTimer); clearTimeout(maxTimer);
+  if (audioCtx){ audioCtx.close().catch(()=>{}); audioCtx = null; }
+  if (stream){ stream.getTracks().forEach(t => t.stop()); stream = null; }
+}
+
+function stopRecording(){
+  if (recorder && recording){ recording = false; recorder.stop(); }
+}
+
+// Stop automatically after ~1.6s of silence once the person has started speaking
+function watchSilence(){
+  try{
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = audioCtx.createMediaStreamSource(stream);
+    const an = audioCtx.createAnalyser(); an.fftSize = 1024; src.connect(an);
+    const data = new Uint8Array(an.fftSize);
+    let spoke = false, quietSince = Date.now();
+    silenceTimer = setInterval(() => {
+      an.getByteTimeDomainData(data);
+      let sum = 0; for (let i = 0; i < data.length; i++){ const v = (data[i]-128)/128; sum += v*v; }
+      const level = Math.sqrt(sum / data.length);
+      if (level > 0.03){ spoke = true; quietSince = Date.now(); }
+      else if (spoke && Date.now() - quietSince > 1600) stopRecording();
+    }, 100);
+  }catch(_){ /* silence detection is optional; tap to stop still works */ }
+}
+
+async function startRecording(){
+  if (!navigator.mediaDevices || !window.MediaRecorder){
+    $("support").hidden = false; statusEl.textContent = "Please type your question below"; return;
+  }
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  }catch(e){
+    statusEl.textContent = (e && e.name === "NotAllowedError")
+      ? "Microphone is blocked. Click the 🔒 icon in the address bar, allow Microphone, then refresh."
+      : "No microphone found. Please type your question below.";
+    return;
+  }
+  const mime = pickMime();
+  recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+  chunks = [];
+  recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  recorder.onstop = async () => {
+    mic.classList.remove("listening");
+    const type = recorder.mimeType || mime || "audio/webm";
+    cleanupAudio();
+    const blob = new Blob(chunks, { type });
+    if (blob.size < 2000){ statusEl.textContent = "I didn't catch that. Tap the mic and try again."; return; }
+    statusEl.textContent = "Understanding your question…"; mic.disabled = true;
+    try{
+      const b64 = await new Promise((ok, bad) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(",")[1]); fr.onerror = bad; fr.readAsDataURL(blob); });
+      const r = await fetch("/api/transcribe", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ audio: b64, mime: type }) });
+      const data = await r.json();
+      mic.disabled = false;
+      if (data.text) ask(data.text);
+      else statusEl.textContent = data.error || "I didn't catch that. Please try again or type below.";
+    }catch(_){
+      mic.disabled = false; statusEl.textContent = "Connection problem. Please try again or type below.";
+    }
+  };
+  recorder.start();
+  recording = true; mic.classList.add("listening");
+  statusEl.textContent = "Listening… ask your question, then pause (or tap again to stop)";
+  watchSilence();
+  maxTimer = setTimeout(stopRecording, 30000);
+}
+
+mic.onclick = () => {
+  if (busy) return;
+  if (recording){ stopRecording(); return; }
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  startRecording();
+};
 </script>
 </body>
 </html>
