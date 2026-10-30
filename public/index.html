@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Talk to Rakshith</title>
+<meta name="description" content="A voice bot that answers interview questions the way Rakshith R would.">
+<style>
+  :root{
+    --bg:#f6f5f2; --card:#ffffff; --ink:#1c1b19; --muted:#6b6862; --line:#e4e1da;
+    --accent:#2f5d50; --accent-ink:#ffffff; --me:#2f5d50; --bot:#f0eee9; --danger:#b4432f;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#141413; --card:#1d1c1a; --ink:#f1efe9; --muted:#a29e95; --line:#2e2d2a;
+      --accent:#7fb8a4; --accent-ink:#0f1a16; --me:#3b6e60; --bot:#262522; --danger:#e07a63; }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:720px;margin:0 auto;padding:24px 16px 40px}
+  header h1{font-size:1.6rem;margin:0 0 4px}
+  header p{margin:0;color:var(--muted)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;margin-top:20px}
+  .how{margin:0;padding-left:20px;color:var(--muted)}
+  .how li{margin:2px 0}
+  .microw{display:flex;flex-direction:column;align-items:center;gap:10px;padding:8px 0 4px}
+  #mic{width:96px;height:96px;border-radius:50%;border:none;cursor:pointer;
+    background:var(--accent);color:var(--accent-ink);font-size:38px;
+    box-shadow:0 6px 20px rgba(0,0,0,.15);transition:transform .15s}
+  #mic:hover{transform:scale(1.04)}
+  #mic.listening{animation:pulse 1.2s infinite}
+  #mic:disabled{opacity:.5;cursor:not-allowed}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(47,93,80,.5)}70%{box-shadow:0 0 0 22px rgba(47,93,80,0)}100%{box-shadow:0 0 0 0 rgba(47,93,80,0)}}
+  #status{color:var(--muted);min-height:1.5em;text-align:center}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;justify-content:center}
+  .chip{border:1px solid var(--line);background:transparent;color:var(--ink);border-radius:999px;
+    padding:7px 12px;font:inherit;font-size:.9rem;cursor:pointer}
+  .chip:hover{border-color:var(--accent)}
+  #log{display:flex;flex-direction:column;gap:10px;min-height:60px}
+  .msg{max-width:85%;padding:10px 14px;border-radius:14px;white-space:pre-wrap;word-wrap:break-word}
+  .me{align-self:flex-end;background:var(--me);color:#fff;border-bottom-right-radius:4px}
+  .bot{align-self:flex-start;background:var(--bot);border-bottom-left-radius:4px}
+  .bot .who{font-size:.75rem;color:var(--muted);display:block;margin-bottom:2px}
+  .empty{color:var(--muted);text-align:center;margin:8px 0}
+  form{display:flex;gap:8px;margin-top:16px}
+  input[type=text]{flex:1;min-width:0;padding:12px 14px;border-radius:12px;border:1px solid var(--line);
+    background:var(--bg);color:var(--ink);font:inherit}
+  .btn{padding:12px 16px;border-radius:12px;border:none;background:var(--accent);color:var(--accent-ink);
+    font:inherit;font-weight:600;cursor:pointer}
+  .row{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+  label{color:var(--muted);font-size:.9rem;display:flex;align-items:center;gap:6px;cursor:pointer}
+  .link{background:none;border:none;color:var(--muted);text-decoration:underline;cursor:pointer;font:inherit;font-size:.9rem}
+  .warn{color:var(--danger);font-size:.9rem;text-align:center}
+  footer{color:var(--muted);font-size:.85rem;text-align:center;margin-top:20px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Talk to Rakshith 🎙️</h1>
+    <p>Ask me an interview question out loud and I'll answer the way I would in person.</p>
+  </header>
+
+  <div class="card">
+    <ol class="how">
+      <li>Tap the microphone and allow microphone access.</li>
+      <li>Ask your question, then pause. I'll answer out loud.</li>
+      <li>No microphone? Type your question in the box below.</li>
+    </ol>
+
+    <div class="microw">
+      <button id="mic" aria-label="Tap to speak">🎤</button>
+      <div id="status">Tap the microphone to start</div>
+      <div id="support" class="warn" hidden>Voice input isn't supported in this browser. Please use Chrome, Edge or Safari, or type your question below.</div>
+    </div>
+
+    <div class="chips" id="chips"></div>
+  </div>
+
+  <div class="card">
+    <div id="log"><p class="empty" id="empty">Your conversation will appear here.</p></div>
+    <form id="form">
+      <input id="text" type="text" placeholder="Or type a question…" autocomplete="off" aria-label="Type a question">
+      <button class="btn" type="submit">Ask</button>
+    </form>
+    <div class="row">
+      <label><input type="checkbox" id="speak" checked> Read answers aloud</label>
+      <button class="link" id="stop" type="button">Stop speaking</button>
+      <button class="link" id="clear" type="button">Clear chat</button>
+    </div>
+  </div>
+
+  <footer>Built by Rakshith R · Answers are generated by an AI voice bot trained on my background</footer>
+</div>
+
+<script>
+const SAMPLE = [
+  "What should we know about your life story in a few sentences?",
+  "What's your #1 superpower?",
+  "What are the top 3 areas you'd like to grow in?",
+  "What misconception do your coworkers have about you?",
+  "How do you push your boundaries and limits?"
+];
+const $ = id => document.getElementById(id);
+const log = $("log"), statusEl = $("status"), mic = $("mic");
+let history = [], busy = false;
+
+SAMPLE.forEach(q => {
+  const b = document.createElement("button");
+  b.className = "chip"; b.type = "button"; b.textContent = q;
+  b.onclick = () => ask(q);
+  $("chips").appendChild(b);
+});
+
+function add(role, text){
+  $("empty")?.remove();
+  const d = document.createElement("div");
+  d.className = "msg " + (role === "user" ? "me" : "bot");
+  if (role !== "user"){ const w = document.createElement("span"); w.className="who"; w.textContent="Rakshith"; d.appendChild(w); }
+  d.appendChild(document.createTextNode(text));
+  log.appendChild(d); d.scrollIntoView({behavior:"smooth", block:"end"});
+  return d;
+}
+
+// ---------- Speaking ----------
+let voice = null;
+function pickVoice(){
+  const vs = speechSynthesis.getVoices();
+  voice = vs.find(v => /en-IN/i.test(v.lang) && /male|ravi|rishi|prabhat/i.test(v.name))
+       || vs.find(v => /en-IN/i.test(v.lang))
+       || vs.find(v => /en-(US|GB)/i.test(v.lang) && /male|daniel|david|guy|google uk english male/i.test(v.name))
+       || vs.find(v => /^en/i.test(v.lang)) || null;
+}
+if ("speechSynthesis" in window){ pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+function speak(text){
+  if (!$("speak").checked || !("speechSynthesis" in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  if (voice) u.voice = voice; u.rate = 1; u.pitch = 1;
+  u.onstart = () => statusEl.textContent = "Speaking…";
+  u.onend = () => statusEl.textContent = "Tap the microphone to ask another question";
+  speechSynthesis.speak(u);
+}
+$("stop").onclick = () => { if ("speechSynthesis" in window) speechSynthesis.cancel(); statusEl.textContent = "Stopped"; };
+$("clear").onclick = () => { history = []; log.innerHTML = '<p class="empty" id="empty">Your conversation will appear here.</p>'; };
+
+// ---------- Asking ----------
+async function ask(q){
+  q = (q || "").trim(); if (!q || busy) return;
+  busy = true; mic.disabled = true;
+  add("user", q); history.push({role:"user", content:q});
+  const thinking = add("bot", "Thinking…");
+  statusEl.textContent = "Thinking…";
+  try{
+    const r = await fetch("/api/chat", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({messages: history})});
+    const data = await r.json();
+    const reply = data.reply || data.error || "Sorry, something went wrong.";
+    thinking.lastChild.textContent = reply;
+    if (data.reply){ history.push({role:"assistant", content:reply}); speak(reply); }
+    else statusEl.textContent = reply;
+  }catch(e){
+    thinking.lastChild.textContent = "Couldn't reach the server. Please check your connection and try again.";
+    statusEl.textContent = "Connection problem";
+  }finally{ busy = false; mic.disabled = false; }
+}
+$("form").onsubmit = e => { e.preventDefault(); const t = $("text"); ask(t.value); t.value = ""; };
+
+// ---------- Listening ----------
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SR){ $("support").hidden = false; mic.disabled = true; statusEl.textContent = "Type your question below"; }
+else{
+  const rec = new SR(); rec.lang = "en-IN"; rec.interimResults = true; rec.continuous = false;
+  let listening = false, finalText = "";
+  rec.onstart = () => { listening = true; finalText = ""; mic.classList.add("listening"); statusEl.textContent = "Listening… ask your question"; };
+  rec.onresult = e => {
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++){
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) finalText += t; else interim += t;
+    }
+    statusEl.textContent = "“" + (finalText + interim).trim() + "”";
+  };
+  rec.onerror = e => {
+    statusEl.textContent = e.error === "not-allowed" ? "Microphone blocked. Allow mic access in your browser, or type below."
+      : e.error === "no-speech" ? "I didn't hear anything. Tap the mic and try again." : "Couldn't hear that. Please try again or type below.";
+  };
+  rec.onend = () => { listening = false; mic.classList.remove("listening"); if (finalText.trim()) ask(finalText); };
+  mic.onclick = () => {
+    if (listening){ rec.stop(); return; }
+    if ("speechSynthesis" in window) speechSynthesis.cancel();
+    try{ rec.start(); }catch(_){}
+  };
+}
+</script>
+</body>
+</html>
